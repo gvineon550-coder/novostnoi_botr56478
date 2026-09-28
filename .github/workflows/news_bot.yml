@@ -2,7 +2,7 @@ name: Hourly News Digest
 
 on:
   schedule:
-    - cron: '5 * * * *'   # каждый час в :05 UTC
+    - cron: '5 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -15,6 +15,14 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Restore state
+        uses: actions/cache@v4
+        with:
+          path: state
+          key: news-state-${{ github.run_id }}
+          restore-keys: |
+            news-state-
+
       - name: Install deps
         run: pip install -r requirements.txt
 
@@ -22,4 +30,5 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          METNO_EMAIL: ${{ secrets.METNO_EMAIL }}
         run: python main.py
