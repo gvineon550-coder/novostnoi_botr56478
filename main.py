@@ -11,7 +11,6 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 METNO_EMAIL = os.environ.get("METNO_EMAIL", "")
 
-# --- ИСТОЧНИКИ ---
 RSS_URLS = [
     ("📰 Lenta.ru",       "https://lenta.ru/rss/news"),
     ("✍️ АиФ",            "https://aif.ru/rss/news.php"),
@@ -24,7 +23,7 @@ DEDUP_HOURS = 12
 DIVIDER = "━━━━━━━━━━━━━━━"
 STATE_DIR = "state"
 STATE_FILE = os.path.join(STATE_DIR, "sent.json")
-
+META_FILE = os.path.join(STATE_DIR, "meta.json")
 NALCHIK_LAT = 43.4949918
 NALCHIK_LON = 43.6045133
 
@@ -54,9 +53,61 @@ CATEGORIES = [
              "гаджет", "телефон", "chatgpt", "технолог", "интернет"]),
     ("🌍", ["сша", "украин", "европ", "нато", "китай", "трамп", "байден", "израил",
              "палестин", "сирия", "иран"]),
-    ("🌦", ["погод", "циклон", "антициклон", "мороз", "жара", "снегопад", "ливн",
-             "ураган", "шторм", "наводнен"]),
 ]
+
+HOLIDAYS = {
+    "01-01": "🎄 Новый год",
+    "01-07": "🎄 Рождество Христово",
+    "01-25": "🎓 День студента (Татьянин день)",
+    "02-14": "💝 День всех влюблённых",
+    "02-23": "🪖 День защитника Отечества",
+    "03-08": "🌷 Международный женский день",
+    "04-01": "😂 День смеха",
+    "04-12": "🚀 День космонавтики",
+    "05-01": "🌸 Праздник Весны и Труда",
+    "05-09": "🎖 День Победы",
+    "06-01": "🧒 День защиты детей",
+    "06-12": "🇷🇺 День России",
+    "07-08": "💑 День семьи, любви и верности",
+    "09-01": "🎒 День знаний",
+    "10-05": "👨‍🏫 День учителя",
+    "11-04": "🤝 День народного единства",
+    "12-12": "📜 День Конституции РФ",
+    "12-31": "🥂 Канун Нового года",
+}
+
+# Кураторский список цитат с авторами (для красивого фото)
+QUOTES = [
+    ("Красота спасёт мир.", "Фёдор Достоевский"),
+    ("Все счастливые семьи похожи друг на друга, каждая несчастливая семья несчастлива по-своему.", "Лев Толстой"),
+    ("Умом Россию не понять.", "Фёдор Тютчев"),
+    ("Человек — это звучит гордо.", "Максим Горький"),
+    ("Рукописи не горят.", "Михаил Булгаков"),
+    ("Кто не рискует, тот не пьёт шампанского.", "Русская пословица"),
+    ("Не бойтесь быть не как все.", "Антон Чехов"),
+    ("Счастье не в том, чтобы делать всегда, что хочешь, а в том, чтобы всегда хотеть того, что делаешь.", "Лев Толстой"),
+    ("В человеке всё должно быть прекрасно: и лицо, и одежда, и душа, и мысли.", "Антон Чехов"),
+    ("Родину любят не за то, что она велика, а за то, что она своя.", "Сенека"),
+    ("Жизнь дана на добрые дела.", "Русская пословица"),
+    ("Хочешь быть счастливым — будь им.", "Козьма Прутков"),
+    ("Знание — сила.", "Фрэнсис Бэкон"),
+    ("Мы в ответе за тех, кого приручили.", "Антуан де Сент-Экзюпери"),
+    ("Всё пройдёт, и это тоже пройдёт.", "Восточная мудрость"),
+    ("Гений — это один процент вдохновения и девяносто девять процентов пота.", "Томас Эдисон"),
+    ("Единственный способ делать великую работу — любить то, что делаешь.", "Стив Джобс"),
+    ("Век живи — век учись.", "Русская пословица"),
+    ("Слово не воробей, вылетит — не поймаешь.", "Русская пословица"),
+    ("Чтобы дойти до цели, надо прежде всего идти.", "Оноре де Бальзак"),
+    ("Быстрее всего учишься в трёх случаях: до 7 лет, на тренингах и когда жизнь бьёт.", "Народная мудрость"),
+    ("Не откладывай на завтра то, что можно сделать сегодня.", "Бенджамин Франклин"),
+    ("Тот, кто хочет — ищет возможности, кто не хочет — ищет причины.", "Сократ"),
+    ("Успех — это способность идти от одной неудачи к другой, не теряя энтузиазма.", "Уинстон Черчилль"),
+    ("Мы живём в мире, где за всё надо платить.", "Публилий Сир"),
+]
+
+TOP_KEYWORDS = ["срочно", "экстренно", "важно", "главное", "погиб", "убит",
+                "трагедия", "катастрофа", "впервые", "рекорд", "путин",
+                "удар", "взрыв", "война", "мир", "санкц", "переговор"]
 
 
 def strip_html(text: str) -> str:
@@ -155,7 +206,44 @@ def tg(method: str, payload: dict):
         return None
 
 
-# ---------- ПОГОДА (3 источника) ----------
+# ---------- ДЕНЬ / ВРЕМЯ / ЛУНА ----------
+
+def greeting() -> str:
+    h = (datetime.now(timezone.utc) + timedelta(hours=3)).hour
+    if 5 <= h < 12: return "🌅 Доброе утро!"
+    if 12 <= h < 18: return "☀️ Добрый день!"
+    if 18 <= h < 23: return "🌆 Добрый вечер!"
+    return "🌙 Доброй ночи!"
+
+
+def day_progress() -> str:
+    msk = datetime.now(timezone.utc) + timedelta(hours=3)
+    sec = msk.hour * 3600 + msk.minute * 60 + msk.second
+    pct = sec / 86400
+    filled = int(pct * 10)
+    return f"{'▰' * filled}{'▱' * (10 - filled)} {int(pct * 100)}% дня"
+
+
+def moon_phase() -> str:
+    known_new = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)
+    days = (datetime.now(timezone.utc) - known_new).total_seconds() / 86400
+    p = (days % 29.530588853) / 29.530588853
+    if p < 0.0625 or p >= 0.9375: return "🌑 Новолуние"
+    if p < 0.1875: return "🌒 Молодой месяц"
+    if p < 0.3125: return "🌓 Первая четверть"
+    if p < 0.4375: return "🌔 Растущая луна"
+    if p < 0.5625: return "🌕 Полнолуние"
+    if p < 0.6875: return "🌖 Убывающая луна"
+    if p < 0.8125: return "🌗 Последняя четверть"
+    return "🌘 Старая луна"
+
+
+def today_holiday() -> str:
+    key = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%m-%d")
+    return HOLIDAYS.get(key, "")
+
+
+# ---------- ПОГОДА ----------
 
 def weather_from_open_meteo():
     try:
@@ -163,16 +251,33 @@ def weather_from_open_meteo():
             f"https://api.open-meteo.com/v1/forecast"
             f"?latitude={NALCHIK_LAT}&longitude={NALCHIK_LON}"
             f"&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m"
-            f"&timezone=Europe/Moscow"
+            f"&daily=sunrise,sunset,weather_code,temperature_2m_max,temperature_2m_min"
+            f"&timezone=Europe/Moscow&forecast_days=2"
         )
         r = requests.get(url, timeout=15)
         r.raise_for_status()
-        d = r.json()["current"]
-        temp = round(d["temperature_2m"])
-        feels = round(d["apparent_temperature"])
-        desc = WEATHER_CODES.get(d["weather_code"], "🌡 —")
-        wind = round(d["wind_speed_10m"])
-        return f"{desc} · {temp}°C (ощущается {feels}°C), ветер {wind} м/с", "Open-Meteo"
+        d = r.json()
+        cur = d["current"]
+        temp = round(cur["temperature_2m"])
+        feels = round(cur["apparent_temperature"])
+        desc = WEATHER_CODES.get(cur["weather_code"], "🌡 —")
+        wind = round(cur["wind_speed_10m"])
+        current_line = f"{desc} · {temp}°C (ощущается {feels}°C), ветер {wind} м/с"
+
+        daily = d.get("daily", {})
+        extra = []
+        if daily.get("sunrise") and daily.get("sunset"):
+            sr = daily["sunrise"][0][11:16]
+            ss = daily["sunset"][0][11:16]
+            extra.append(f"🌅 Восход {sr} · Закат {ss}")
+        if daily.get("temperature_2m_max") and len(daily["temperature_2m_max"]) > 1:
+            tmax = round(daily["temperature_2m_max"][1])
+            tmin = round(daily["temperature_2m_min"][1])
+            code = daily["weather_code"][1]
+            tomorrow = WEATHER_CODES.get(code, "🌡").split(" ", 1)[-1]
+            extra.append(f"📅 Завтра: {tomorrow}, {tmin}…{tmax}°C")
+
+        return current_line, extra, "Open-Meteo"
     except Exception as e:
         print(f"weather open-meteo fail: {e}", flush=True)
         return None
@@ -195,11 +300,11 @@ def weather_from_wttr():
             "Thunderstorm": "⛈ Гроза",
         }
         desc = mapping.get(cur["weatherDesc"][0]["value"], cur["weatherDesc"][0]["value"])
-        return (
+        line = (
             f"{desc} · {cur['temp_C']}°C (ощущается {cur['FeelsLikeC']}°C), "
-            f"ветер {cur['windspeedKmph']} км/ч",
-            "wttr.in",
+            f"ветер {cur['windspeedKmph']} км/ч"
         )
+        return line, [], "wttr.in"
     except Exception as e:
         print(f"weather wttr fail: {e}", flush=True)
         return None
@@ -228,7 +333,7 @@ def weather_from_metno():
         elif "rain" in symbol: desc = "🌧 Дождь"
         elif "snow" in symbol: desc = "🌨 Снег"
         elif "thunder" in symbol: desc = "⛈ Гроза"
-        return f"{desc} · {temp}°C, ветер {wind} км/ч", "met.no"
+        return f"{desc} · {temp}°C, ветер {wind} км/ч", [], "met.no"
     except Exception as e:
         print(f"weather metno fail: {e}", flush=True)
         return None
@@ -236,13 +341,36 @@ def weather_from_metno():
 
 def fetch_weather():
     for func in (weather_from_open_meteo, weather_from_wttr, weather_from_metno):
-        result = func()
-        if result:
-            return result
+        r = func()
+        if r:
+            return r
     return None
 
 
-# ---------- КУРСЫ / КРИПТА / ЦИТАТА / ИСТОРИЯ ----------
+def fetch_air_quality() -> str:
+    try:
+        url = (
+            f"https://air-quality-api.open-meteo.com/v1/air-quality"
+            f"?latitude={NALCHIK_LAT}&longitude={NALCHIK_LON}"
+            f"&current=european_aqi&timezone=Europe/Moscow"
+        )
+        r = requests.get(url, timeout=15)
+        aqi = r.json()["current"]["european_aqi"]
+        if aqi is None:
+            return ""
+        if aqi <= 20: label = "Отличный"
+        elif aqi <= 40: label = "Хороший"
+        elif aqi <= 60: label = "Средний"
+        elif aqi <= 80: label = "Плохой"
+        elif aqi <= 100: label = "Очень плохой"
+        else: label = "Опасный"
+        return f"🍃 Воздух: {label} (AQI {aqi})"
+    except Exception as e:
+        print(f"air fail: {e}", flush=True)
+        return ""
+
+
+# ---------- КУРСЫ / КРИПТА ----------
 
 def fetch_rates() -> str:
     try:
@@ -281,47 +409,92 @@ def fetch_crypto() -> str:
         return ""
 
 
-def fetch_quote() -> str:
-    """💬 Цитата дня — через Викицитатник (русский)."""
+# ---------- ЦИТАТА С ПОРТРЕТОМ ----------
+
+def fetch_quote():
+    """Возвращает (текст, автор) из кураторского списка."""
+    import random
+    return random.choice(QUOTES)
+
+
+def fetch_author_photo(author: str) -> str:
     try:
         r = requests.get(
-            "https://ru.wikiquote.org/w/api.php",
+            "https://ru.wikipedia.org/w/api.php",
             params={
-                "action": "query",
-                "format": "json",
-                "list": "random",
-                "rnnamespace": 0,
-                "rnlimit": 1,
+                "action": "query", "titles": author, "prop": "pageimages",
+                "format": "json", "pithumbsize": 600, "redirects": 1,
             },
             headers={"User-Agent": "NewsDigestBot/1.0"},
             timeout=15,
         )
-        data = r.json()
-        page_title = data["query"]["random"][0]["title"]
-
-        r2 = requests.get(
-            "https://ru.wikiquote.org/w/api.php",
-            params={
-                "action": "parse",
-                "format": "json",
-                "page": page_title,
-                "prop": "wikitext",
-                "section": 0,
-            },
-            headers={"User-Agent": "NewsDigestBot/1.0"},
-            timeout=15,
-        )
-        wikitext = r2.json()["parse"]["wikitext"]["*"]
-        quotes = re.findall(r"\*(.*)", wikitext)
-        if quotes:
-            quote_text = strip_html(quotes[0]).strip()
-            if len(quote_text) > 10:
-                return f"«{quote_text}»"
-        return ""
+        pages = r.json().get("query", {}).get("pages", {})
+        for p in pages.values():
+            thumb = p.get("thumbnail", {}).get("source")
+            if thumb:
+                return thumb
     except Exception as e:
-        print(f"quote fail: {e}", flush=True)
-        return ""
+        print(f"author photo fail: {e}", flush=True)
+    return ""
 
+
+def send_quote():
+    text, author = fetch_quote()
+    caption = f"<b>💬 Цитата дня</b>\n\n<i>«{html.escape(text)}»</i>\n\n— <b>{html.escape(author)}</b>"
+    photo = fetch_author_photo(author)
+    if photo:
+        res = tg("sendPhoto", {
+            "chat_id": CHAT_ID, "photo": photo,
+            "caption": caption, "parse_mode": "HTML",
+        })
+        if res and res.get("ok"):
+            return
+    tg("sendMessage", {
+        "chat_id": CHAT_ID, "text": caption, "parse_mode": "HTML",
+    })
+
+
+# ---------- АНЕКДОТ ----------
+
+def fetch_joke() -> str:
+    # Источник 1: rzhunemogu.ru
+    try:
+        r = requests.get(
+            "http://rzhunemogu.ru/RandJSON.aspx",
+            params={"CType": 1}, timeout=15,
+        )
+        text = r.content.decode("utf-8-sig", errors="replace")
+        m = re.search(r'"content":"(.*?)"\s*}', text, re.DOTALL)
+        if m:
+            joke = m.group(1)
+            joke = joke.replace("\\r\\n", "\n").replace("\\n", "\n").replace('\\"', '"')
+            joke = strip_html(joke)
+            if 20 < len(joke) < 600:
+                return joke
+    except Exception as e:
+        print(f"joke rzhunemogu fail: {e}", flush=True)
+
+    # Источник 2: anekdot.ru RSS
+    try:
+        feed = feedparser.parse("https://www.anekdot.ru/rss/export_j.xml")
+        if feed.entries:
+            joke = strip_html(feed.entries[0].get("description", ""))
+            if 20 < len(joke) < 600:
+                return joke
+    except Exception as e:
+        print(f"joke anekdot fail: {e}", flush=True)
+    return ""
+
+
+def send_joke():
+    joke = fetch_joke()
+    if not joke:
+        return
+    text = f"<b>😄 Анекдот дня</b>\n\n{joke}"
+    tg("sendMessage", {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"})
+
+
+# ---------- ИСТОРИЯ ----------
 
 def fetch_history() -> str:
     try:
@@ -330,10 +503,9 @@ def fetch_history() -> str:
             f"https://api.wikimedia.org/feed/v1/wikipedia/ru/onthisday/events/"
             f"{now.month}/{now.day}"
         )
-        headers = {"User-Agent": "NewsDigestBot/1.0"}
-        r = requests.get(url, headers=headers, timeout=15)
+        r = requests.get(url, headers={"User-Agent": "NewsDigestBot/1.0"}, timeout=15)
         if r.status_code != 200:
-            print(f"history fail: {r.status_code} {r.text[:200]}", flush=True)
+            print(f"history fail: {r.status_code}", flush=True)
             return ""
         events = r.json().get("events", [])
         if not events:
@@ -347,20 +519,49 @@ def fetch_history() -> str:
         return ""
 
 
-# ---------- ОТПРАВКА В TELEGRAM ----------
+# ---------- АЧИВКИ ----------
 
-def send_header(total_news: int) -> None:
+def track_visit() -> int:
+    os.makedirs(STATE_DIR, exist_ok=True)
+    try:
+        with open(META_FILE) as f:
+            meta = json.load(f)
+    except Exception:
+        meta = {}
+    now = time.time()
+    if "first_seen" not in meta:
+        meta["first_seen"] = now
+    days = int((now - meta["first_seen"]) / 86400) + 1
+    meta["last_seen"] = now
+    try:
+        with open(META_FILE, "w") as f:
+            json.dump(meta, f)
+    except Exception as e:
+        print(f"meta save fail: {e}", flush=True)
+    return days
+
+
+# ---------- ШАПКА ----------
+
+def send_header(total_news: int, days_active: int) -> None:
     msk = datetime.now(timezone.utc) + timedelta(hours=3)
     lines = [
-        "<b>📰 Дайджест новостей</b>",
-        f"<i>{msk.strftime('%d.%m.%Y · %H:%M')} МСК</i>",
+        f"<b>{greeting()}</b>",
+        f"📰 <b>Дайджест новостей</b> · <i>{msk.strftime('%d.%m.%Y · %H:%M')} МСК</i>",
+        day_progress(),
         DIVIDER,
     ]
 
     weather = fetch_weather()
     if weather:
-        text, source = weather
-        lines += ["<b>🌤 Погода в Нальчике</b>", f"{text} <i>({source})</i>", ""]
+        current, extra, source = weather
+        lines += ["<b>🌤 Погода в Нальчике</b>", current]
+        for line in extra:
+            lines.append(line)
+        air = fetch_air_quality()
+        if air:
+            lines.append(air)
+        lines.append("")
 
     rates = fetch_rates()
     if rates:
@@ -370,41 +571,72 @@ def send_header(total_news: int) -> None:
     if crypto:
         lines += ["<b>🪙 Криптовалюты</b>", crypto, ""]
 
-    quote = fetch_quote()
-    if quote:
-        lines += ["<b>💬 Цитата дня</b>", f"<i>{quote}</i>", ""]
+    lines.append(f"<b>🌙 Луна:</b> {moon_phase()}")
+
+    holiday = today_holiday()
+    if holiday:
+        lines.append(f"<b>🎉 Праздник:</b> {holiday}")
 
     history = fetch_history()
     if history:
-        lines += ["<b>📅 В этот день</b>", history, ""]
+        lines += ["", f"<b>📅 В этот день</b>", history]
 
     if total_news > 0:
         lines += [DIVIDER, f"📌 <b>Свежих новостей: {total_news}</b>"]
     else:
         lines += [DIVIDER, "📌 <i>Новых новостей пока нет</i>"]
 
+    lines.append(f"🏆 <i>Вы с нами {days_active} {plural_days(days_active)}</i>")
+
     tg("sendMessage", {
-        "chat_id": CHAT_ID,
-        "text": "\n".join(lines),
-        "parse_mode": "HTML",
+        "chat_id": CHAT_ID, "text": "\n".join(lines), "parse_mode": "HTML",
     })
 
+
+def plural_days(n: int) -> str:
+    n10, n100 = n % 10, n % 100
+    if n10 == 1 and n100 != 11: return "день"
+    if 2 <= n10 <= 4 and not (12 <= n100 <= 14): return "дня"
+    return "дней"
+
+
+# ---------- ТОП-НОВОСТЬ ----------
+
+def pick_top_news(items: list) -> list:
+    scored = []
+    for it in items:
+        text = (it["title"] + " " + it["summary"]).lower()
+        score = sum(3 for kw in TOP_KEYWORDS if kw in text)
+        score += min(len(it["summary"]) // 50, 5)
+        scored.append((score, it))
+    scored.sort(key=lambda x: -x[0])
+    return [it for _, it in scored[:3]]
+
+
+# ---------- КРАТКИЙ ОБЗОР ----------
 
 def send_preview_list(items: list) -> None:
     if not items:
         return
-    lines = ["<b>🗂 Краткий обзор</b>", ""]
+    # Топ-новости
+    top = pick_top_news(items)
+    lines = ["<b>🔥 Главное за сегодня</b>", ""]
+    for it in top:
+        cat = detect_category(it["title"])
+        title = html.escape(it["title"])
+        lines.append(f"{cat} <a href=\"{it['link']}\">{title}</a>")
+    lines += ["", DIVIDER, "<b>🗂 Краткий обзор</b>", ""]
     for i, item in enumerate(items, 1):
         cat = detect_category(item["title"])
         title = html.escape(item["title"])
         lines.append(f"{i}. {cat} <a href=\"{item['link']}\">{title}</a>")
     tg("sendMessage", {
-        "chat_id": CHAT_ID,
-        "text": "\n".join(lines),
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
+        "chat_id": CHAT_ID, "text": "\n".join(lines),
+        "parse_mode": "HTML", "disable_web_page_preview": True,
     })
 
+
+# ---------- КАРТОЧКА НОВОСТИ ----------
 
 def send_item(item: dict, idx: int, total: int) -> None:
     cat = detect_category(item["title"])
@@ -415,39 +647,32 @@ def send_item(item: dict, idx: int, total: int) -> None:
 
     caption = (
         f"<b>{idx}/{total}</b> · {cat} <i>{source}</i>{time_part}\n"
-        f"{DIVIDER}\n"
-        f"<b>{title}</b>"
+        f"{DIVIDER}\n<b>{title}</b>"
     )
     if summary:
         caption += f"\n\n{summary}"
     if len(caption) > 1000:
         caption = caption[:1000] + "…"
 
-    reply_markup = {
-        "inline_keyboard": [[
-            {"text": "📖 Читать полностью", "url": item["link"]}
-        ]]
-    }
+    reply_markup = {"inline_keyboard": [[
+        {"text": "📖 Читать полностью", "url": item["link"]}
+    ]]}
 
     if item["image"]:
         res = tg("sendPhoto", {
-            "chat_id": CHAT_ID,
-            "photo": item["image"],
-            "caption": caption,
-            "parse_mode": "HTML",
-            "reply_markup": reply_markup,
+            "chat_id": CHAT_ID, "photo": item["image"], "caption": caption,
+            "parse_mode": "HTML", "reply_markup": reply_markup,
         })
         if res and res.get("ok"):
             return
 
     tg("sendMessage", {
-        "chat_id": CHAT_ID,
-        "text": caption,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-        "reply_markup": reply_markup,
+        "chat_id": CHAT_ID, "text": caption, "parse_mode": "HTML",
+        "disable_web_page_preview": True, "reply_markup": reply_markup,
     })
 
+
+# ---------- СБОР НОВОСТЕЙ ----------
 
 def fetch_all_news(seen: dict) -> list:
     items = []
@@ -473,23 +698,35 @@ def fetch_all_news(seen: dict) -> list:
     return items
 
 
+# ---------- MAIN ----------
+
 def main() -> None:
     print(">>> START", flush=True)
     seen = load_seen()
-    print(f">>> seen={len(seen)}", flush=True)
+    days_active = track_visit()
+    print(f">>> seen={len(seen)} days={days_active}", flush=True)
 
     items = fetch_all_news(seen)
     total = len(items)
     print(f">>> new items: {total}", flush=True)
 
-    send_header(total)
+    # 1. Шапка (приветствие + день + погода + курсы + луна + праздник + история)
+    send_header(total, days_active)
+
+    # 2. Цитата дня с портретом автора
+    send_quote()
+
+    # 3. Анекдот
+    send_joke()
 
     if not items:
-        print(">>> nothing new, header sent", flush=True)
+        print(">>> nothing new", flush=True)
         return
 
+    # 4. Топ-новости + краткий обзор
     send_preview_list(items)
 
+    # 5. Карточки
     now = time.time()
     for i, item in enumerate(items, 1):
         print(f">>> {item['source']} | {item['title'][:60]}", flush=True)
