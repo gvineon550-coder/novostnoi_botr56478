@@ -3,6 +3,7 @@ import re
 import json
 import time
 import html
+import random
 import feedparser
 import requests
 from datetime import datetime, timezone, timedelta
@@ -11,11 +12,14 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 METNO_EMAIL = os.environ.get("METNO_EMAIL", "")
 
+# --- ИСТОЧНИКИ (расширенный блок кино) ---
 RSS_URLS = [
-    ("📰 Lenta.ru",       "https://lenta.ru/rss/news"),
-    ("✍️ АиФ",            "https://aif.ru/rss/news.php"),
-    ("📡 РИА Новости",    "https://ria.ru/export/rss2/archive/index.xml"),
-    ("🎬 Кино и сериалы", "https://wcinema.ru/rss/feed/film"),
+    ("📰 Lenta.ru",         "https://lenta.ru/rss/news"),
+    ("✍️ АиФ",              "https://aif.ru/rss/news.php"),
+    ("📡 РИА Новости",      "https://ria.ru/export/rss2/archive/index.xml"),
+    ("🎬 Кино и сериалы",   "https://wcinema.ru/rss/feed/film"),
+    ("🎥 Film.ru",          "https://www.film.ru/rss/news"),
+    ("🎞 Кино-Театр.Ру",    "https://www.kino-teatr.ru/news/rss.xml"),
 ]
 
 NEWS_PER_FEED = 2
@@ -56,27 +60,17 @@ CATEGORIES = [
 ]
 
 HOLIDAYS = {
-    "01-01": "🎄 Новый год",
-    "01-07": "🎄 Рождество Христово",
-    "01-25": "🎓 День студента (Татьянин день)",
-    "02-14": "💝 День всех влюблённых",
-    "02-23": "🪖 День защитника Отечества",
-    "03-08": "🌷 Международный женский день",
-    "04-01": "😂 День смеха",
-    "04-12": "🚀 День космонавтики",
-    "05-01": "🌸 Праздник Весны и Труда",
-    "05-09": "🎖 День Победы",
-    "06-01": "🧒 День защиты детей",
-    "06-12": "🇷🇺 День России",
-    "07-08": "💑 День семьи, любви и верности",
-    "09-01": "🎒 День знаний",
-    "10-05": "👨‍🏫 День учителя",
-    "11-04": "🤝 День народного единства",
-    "12-12": "📜 День Конституции РФ",
-    "12-31": "🥂 Канун Нового года",
+    "01-01": "🎄 Новый год", "01-07": "🎄 Рождество Христово",
+    "01-25": "🎓 День студента (Татьянин день)", "02-14": "💝 День всех влюблённых",
+    "02-23": "🪖 День защитника Отечества", "03-08": "🌷 Международный женский день",
+    "04-01": "😂 День смеха", "04-12": "🚀 День космонавтики",
+    "05-01": "🌸 Праздник Весны и Труда", "05-09": "🎖 День Победы",
+    "06-01": "🧒 День защиты детей", "06-12": "🇷🇺 День России",
+    "07-08": "💑 День семьи, любви и верности", "09-01": "🎒 День знаний",
+    "10-05": "👨‍🏫 День учителя", "11-04": "🤝 День народного единства",
+    "12-12": "📜 День Конституции РФ", "12-31": "🥂 Канун Нового года",
 }
 
-# Кураторский список цитат с авторами (для красивого фото)
 QUOTES = [
     ("Красота спасёт мир.", "Фёдор Достоевский"),
     ("Все счастливые семьи похожи друг на друга, каждая несчастливая семья несчастлива по-своему.", "Лев Толстой"),
@@ -412,8 +406,6 @@ def fetch_crypto() -> str:
 # ---------- ЦИТАТА С ПОРТРЕТОМ ----------
 
 def fetch_quote():
-    """Возвращает (текст, автор) из кураторского списка."""
-    import random
     return random.choice(QUOTES)
 
 
@@ -454,17 +446,40 @@ def send_quote():
     })
 
 
-# ---------- АНЕКДОТ ----------
+# ---------- АНЕКДОТ (ИСПРАВЛЕНА КОДИРОВКА) ----------
 
 def fetch_joke() -> str:
-    # Источник 1: rzhunemogu.ru
+    """Анекдот из надёжного источника с корректной кодировкой."""
+    # Источник 1: anecdotica.ru — API, возвращает JSON, русский, без проблем с кодировкой
+    try:
+        r = requests.get(
+            "http://anecdotica.ru/api",
+            params={
+                "method": "getRandItem",
+                "category": "all",
+                "genre": 1,           # 1 = анекдоты
+                "format": "json",
+                "encoding": "utf-8",
+            },
+            timeout=15,
+        )
+        data = r.json()
+        text = data.get("text", "") or data.get("item", {}).get("text", "")
+        if text and 20 < len(text) < 600:
+            return strip_html(text)
+    except Exception as e:
+        print(f"joke anecdotica fail: {e}", flush=True)
+
+    # Источник 2: rzhunemogu.ru — с ЯВНЫМ декодированием cp1251
     try:
         r = requests.get(
             "http://rzhunemogu.ru/RandJSON.aspx",
-            params={"CType": 1}, timeout=15,
+            params={"CType": 1},
+            timeout=15,
         )
-        text = r.content.decode("utf-8-sig", errors="replace")
-        m = re.search(r'"content":"(.*?)"\s*}', text, re.DOTALL)
+        # КЛЮЧЕВОЙ МОМЕНТ: принудительно декодируем из Windows-1251
+        raw = r.content.decode("cp1251", errors="replace")
+        m = re.search(r'"content":"(.*?)"\s*}', raw, re.DOTALL)
         if m:
             joke = m.group(1)
             joke = joke.replace("\\r\\n", "\n").replace("\\n", "\n").replace('\\"', '"')
@@ -474,15 +489,6 @@ def fetch_joke() -> str:
     except Exception as e:
         print(f"joke rzhunemogu fail: {e}", flush=True)
 
-    # Источник 2: anekdot.ru RSS
-    try:
-        feed = feedparser.parse("https://www.anekdot.ru/rss/export_j.xml")
-        if feed.entries:
-            joke = strip_html(feed.entries[0].get("description", ""))
-            if 20 < len(joke) < 600:
-                return joke
-    except Exception as e:
-        print(f"joke anekdot fail: {e}", flush=True)
     return ""
 
 
@@ -618,7 +624,6 @@ def pick_top_news(items: list) -> list:
 def send_preview_list(items: list) -> None:
     if not items:
         return
-    # Топ-новости
     top = pick_top_news(items)
     lines = ["<b>🔥 Главное за сегодня</b>", ""]
     for it in top:
@@ -710,23 +715,16 @@ def main() -> None:
     total = len(items)
     print(f">>> new items: {total}", flush=True)
 
-    # 1. Шапка (приветствие + день + погода + курсы + луна + праздник + история)
     send_header(total, days_active)
-
-    # 2. Цитата дня с портретом автора
     send_quote()
-
-    # 3. Анекдот
     send_joke()
 
     if not items:
         print(">>> nothing new", flush=True)
         return
 
-    # 4. Топ-новости + краткий обзор
     send_preview_list(items)
 
-    # 5. Карточки
     now = time.time()
     for i, item in enumerate(items, 1):
         print(f">>> {item['source']} | {item['title'][:60]}", flush=True)
