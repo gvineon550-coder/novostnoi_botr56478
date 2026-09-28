@@ -11,7 +11,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 METNO_EMAIL = os.environ.get("METNO_EMAIL", "")
 
-# --- ИСТОЧНИКИ (все русскоязычные + кино) ---
+# --- ИСТОЧНИКИ ---
 RSS_URLS = [
     ("📰 Lenta.ru",       "https://lenta.ru/rss/news"),
     ("✍️ АиФ",            "https://aif.ru/rss/news.php"),
@@ -282,18 +282,41 @@ def fetch_crypto() -> str:
 
 
 def fetch_quote() -> str:
-    """💬 Цитата дня — через forismatic.com (русский)."""
+    """💬 Цитата дня — через Викицитатник (русский)."""
     try:
         r = requests.get(
-            "https://api.forismatic.com/api/1.0/",
-            params={"method": "getQuote", "format": "json", "lang": "ru"},
+            "https://ru.wikiquote.org/w/api.php",
+            params={
+                "action": "query",
+                "format": "json",
+                "list": "random",
+                "rnnamespace": 0,
+                "rnlimit": 1,
+            },
+            headers={"User-Agent": "NewsDigestBot/1.0"},
             timeout=15,
         )
-        d = r.json()
-        text = d.get("quoteText", "").strip()
-        author = d.get("quoteAuthor", "").strip()
-        if text:
-            return f"«{text}» — {author}" if author else f"«{text}»"
+        data = r.json()
+        page_title = data["query"]["random"][0]["title"]
+
+        r2 = requests.get(
+            "https://ru.wikiquote.org/w/api.php",
+            params={
+                "action": "parse",
+                "format": "json",
+                "page": page_title,
+                "prop": "wikitext",
+                "section": 0,
+            },
+            headers={"User-Agent": "NewsDigestBot/1.0"},
+            timeout=15,
+        )
+        wikitext = r2.json()["parse"]["wikitext"]["*"]
+        quotes = re.findall(r"\*(.*)", wikitext)
+        if quotes:
+            quote_text = strip_html(quotes[0]).strip()
+            if len(quote_text) > 10:
+                return f"«{quote_text}»"
         return ""
     except Exception as e:
         print(f"quote fail: {e}", flush=True)
@@ -307,7 +330,11 @@ def fetch_history() -> str:
             f"https://api.wikimedia.org/feed/v1/wikipedia/ru/onthisday/events/"
             f"{now.month}/{now.day}"
         )
-        r = requests.get(url, timeout=15)
+        headers = {"User-Agent": "NewsDigestBot/1.0"}
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            print(f"history fail: {r.status_code} {r.text[:200]}", flush=True)
+            return ""
         events = r.json().get("events", [])
         if not events:
             return ""
@@ -323,7 +350,6 @@ def fetch_history() -> str:
 # ---------- ОТПРАВКА В TELEGRAM ----------
 
 def send_header(total_news: int) -> None:
-    """Шапка: дата, погода, курсы, крипта, цитата дня, история."""
     msk = datetime.now(timezone.utc) + timedelta(hours=3)
     lines = [
         "<b>📰 Дайджест новостей</b>",
