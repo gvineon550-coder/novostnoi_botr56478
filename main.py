@@ -9,12 +9,14 @@ from datetime import datetime, timezone, timedelta
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
-METNO_EMAIL = os.environ.get("METNO_EMAIL", "")  # для met.no (опционально)
+METNO_EMAIL = os.environ.get("METNO_EMAIL", "")
 
+# --- ИСТОЧНИКИ (все русскоязычные + кино) ---
 RSS_URLS = [
-    ("📰 Lenta.ru", "https://lenta.ru/rss/top7"),
-    ("✍️ АиФ",     "https://aif.ru/rss/news.php"),
-    ("🌐 RT",      "https://www.rt.com/rss/news/"),
+    ("📰 Lenta.ru",       "https://lenta.ru/rss/news"),
+    ("✍️ АиФ",            "https://aif.ru/rss/news.php"),
+    ("📡 РИА Новости",    "https://ria.ru/export/rss2/archive/index.xml"),
+    ("🎬 Кино и сериалы", "https://wcinema.ru/rss/feed/film"),
 ]
 
 NEWS_PER_FEED = 2
@@ -23,7 +25,6 @@ DIVIDER = "━━━━━━━━━━━━━━━"
 STATE_DIR = "state"
 STATE_FILE = os.path.join(STATE_DIR, "sent.json")
 
-# Нальчик
 NALCHIK_LAT = 43.4949918
 NALCHIK_LON = 43.6045133
 
@@ -36,6 +37,26 @@ WEATHER_CODES = {
     80: "🌦 Ливни", 81: "🌦 Ливни", 82: "⛈ Сильные ливни",
     95: "⛈ Гроза", 96: "⛈ Гроза с градом", 99: "⛈ Гроза с градом",
 }
+
+CATEGORIES = [
+    ("⚔️", ["сво", "фронт", "удар", "обстрел", "боевик", "штурм", "дрон", "бпла"]),
+    ("🏛", ["путин", "кремль", "госдума", "министр", "правительств", "совет федерации",
+             "закон", "указ", "депутат", "губернатор", "парламент"]),
+    ("💰", ["рубл", "доллар", "евро", "цб ", "центробанк", "биржа", "акции", "курс",
+             "инфляц", "налог", "бюджет", "цена", "нефть", "газ"]),
+    ("⚽", ["матч", "гол ", "чемпионат", "сборная", "олимп", "футбол", "хокке",
+             "тренер", "клуб", "спортсмен"]),
+    ("🚨", ["пожар", "дтп", "взрыв", "погиб", "чп ", "авари", "катастроф", "теракт",
+             "пострадав", "спасател"]),
+    ("🎬", ["фильм", "премьер", "выставк", "концерт", "актер", "актрис", "режиссер",
+             "фестивал", "театр", "музык", "певец", "звезд", "сериал"]),
+    ("💻", ["ии ", "нейросет", "apple", "google", "microsoft", "смартфон", "приложен",
+             "гаджет", "телефон", "chatgpt", "технолог", "интернет"]),
+    ("🌍", ["сша", "украин", "европ", "нато", "китай", "трамп", "байден", "израил",
+             "палестин", "сирия", "иран"]),
+    ("🌦", ["погод", "циклон", "антициклон", "мороз", "жара", "снегопад", "ливн",
+             "ураган", "шторм", "наводнен"]),
+]
 
 
 def strip_html(text: str) -> str:
@@ -82,6 +103,14 @@ def format_time(entry) -> str:
         return ""
 
 
+def detect_category(title: str) -> str:
+    low = title.lower()
+    for emoji, keywords in CATEGORIES:
+        if any(kw in low for kw in keywords):
+            return emoji
+    return "📌"
+
+
 def entry_id(entry) -> str:
     return entry.get("id") or entry.get("link") or entry.get("title", "")
 
@@ -126,10 +155,9 @@ def tg(method: str, payload: dict):
         return None
 
 
-# ---------- ПОГОДА: НЕСКОЛЬКО ИСТОЧНИКОВ ----------
+# ---------- ПОГОДА (3 источника) ----------
 
 def weather_from_open_meteo():
-    """Источник 1: Open-Meteo (без ключа)."""
     try:
         url = (
             f"https://api.open-meteo.com/v1/forecast"
@@ -142,9 +170,8 @@ def weather_from_open_meteo():
         d = r.json()["current"]
         temp = round(d["temperature_2m"])
         feels = round(d["apparent_temperature"])
-        code = d["weather_code"]
+        desc = WEATHER_CODES.get(d["weather_code"], "🌡 —")
         wind = round(d["wind_speed_10m"])
-        desc = WEATHER_CODES.get(code, "🌡 —")
         return f"{desc} · {temp}°C (ощущается {feels}°C), ветер {wind} м/с", "Open-Meteo"
     except Exception as e:
         print(f"weather open-meteo fail: {e}", flush=True)
@@ -152,43 +179,33 @@ def weather_from_open_meteo():
 
 
 def weather_from_wttr():
-    """Источник 2: wttr.in (без ключа, JSON-формат)."""
     try:
         url = f"https://wttr.in/{NALCHIK_LAT},{NALCHIK_LON}?format=j1"
-        headers = {"User-Agent": "curl/8.0"}  # wttr.in любит curl
-        r = requests.get(url, headers=headers, timeout=20)
+        r = requests.get(url, headers={"User-Agent": "curl/8.0"}, timeout=20)
         r.raise_for_status()
-        data = r.json()
-        current = data["current_condition"][0]
-        temp = current["temp_C"]
-        feels = current["FeelsLikeC"]
-        wind = current["windspeedKmph"]
-        desc_en = current["weatherDesc"][0]["value"]
-        # простой перевод основных фраз
+        cur = r.json()["current_condition"][0]
         mapping = {
-            "Sunny": "☀️ Ясно",
-            "Clear": "☀️ Ясно",
+            "Sunny": "☀️ Ясно", "Clear": "☀️ Ясно",
             "Partly cloudy": "⛅ Переменная облачность",
-            "Cloudy": "☁️ Облачно",
-            "Overcast": "☁️ Пасмурно",
-            "Mist": "🌫 Туман",
-            "Fog": "🌫 Туман",
-            "Light rain": "🌦 Небольшой дождь",
-            "Rain": "🌧 Дождь",
+            "Cloudy": "☁️ Облачно", "Overcast": "☁️ Пасмурно",
+            "Mist": "🌫 Туман", "Fog": "🌫 Туман",
+            "Light rain": "🌦 Небольшой дождь", "Rain": "🌧 Дождь",
             "Heavy rain": "🌧 Сильный дождь",
-            "Light snow": "🌨 Небольшой снег",
-            "Snow": "🌨 Снег",
+            "Light snow": "🌨 Небольшой снег", "Snow": "🌨 Снег",
             "Thunderstorm": "⛈ Гроза",
         }
-        desc = mapping.get(desc_en, desc_en)
-        return f"{desc} · {temp}°C (ощущается {feels}°C), ветер {wind} км/ч", "wttr.in"
+        desc = mapping.get(cur["weatherDesc"][0]["value"], cur["weatherDesc"][0]["value"])
+        return (
+            f"{desc} · {cur['temp_C']}°C (ощущается {cur['FeelsLikeC']}°C), "
+            f"ветер {cur['windspeedKmph']} км/ч",
+            "wttr.in",
+        )
     except Exception as e:
         print(f"weather wttr fail: {e}", flush=True)
         return None
 
 
 def weather_from_metno():
-    """Источник 3: met.no (нужен email в User-Agent)."""
     if not METNO_EMAIL:
         return None
     try:
@@ -196,35 +213,21 @@ def weather_from_metno():
             "https://api.met.no/weatherapi/locationforecast/2.0/compact"
             f"?lat={NALCHIK_LAT}&lon={NALCHIK_LON}"
         )
-        headers = {"User-Agent": f"NewsBot/1.0 {METNO_EMAIL}"}
-        r = requests.get(url, headers=headers, timeout=20)
+        r = requests.get(url, headers={"User-Agent": f"NewsBot/1.0 {METNO_EMAIL}"}, timeout=20)
         r.raise_for_status()
-        data = r.json()
-        ts = data["properties"]["timeseries"][0]
-        details = ts["data"]["instant"]["details"]
-        temp = round(details["air_temperature"])
-        wind = round(details["wind_speed"] * 3.6)  # м/с → км/ч
-        # символ погоды из next_1_hours
-        symbol = ""
-        next1 = ts["data"].get("next_1_hours", {})
-        if next1:
-            symbol = next1.get("summary", {}).get("symbol_code", "")
-        # простая интерпретация symbol_code
+        ts = r.json()["properties"]["timeseries"][0]
+        d = ts["data"]["instant"]["details"]
+        temp = round(d["air_temperature"])
+        wind = round(d["wind_speed"] * 3.6)
+        symbol = ts["data"].get("next_1_hours", {}).get("summary", {}).get("symbol_code", "")
         desc = "🌡 —"
-        if "clearsky" in symbol:
-            desc = "☀️ Ясно"
-        elif "fair" in symbol:
-            desc = "🌤 Преим. ясно"
-        elif "partlycloudy" in symbol:
-            desc = "⛅ Переменная облачность"
-        elif "cloudy" in symbol:
-            desc = "☁️ Облачно"
-        elif "rain" in symbol:
-            desc = "🌧 Дождь"
-        elif "snow" in symbol:
-            desc = "🌨 Снег"
-        elif "thunder" in symbol:
-            desc = "⛈ Гроза"
+        if "clearsky" in symbol: desc = "☀️ Ясно"
+        elif "fair" in symbol: desc = "🌤 Преим. ясно"
+        elif "partlycloudy" in symbol: desc = "⛅ Переменная облачность"
+        elif "cloudy" in symbol: desc = "☁️ Облачно"
+        elif "rain" in symbol: desc = "🌧 Дождь"
+        elif "snow" in symbol: desc = "🌨 Снег"
+        elif "thunder" in symbol: desc = "⛈ Гроза"
         return f"{desc} · {temp}°C, ветер {wind} км/ч", "met.no"
     except Exception as e:
         print(f"weather metno fail: {e}", flush=True)
@@ -232,7 +235,6 @@ def weather_from_metno():
 
 
 def fetch_weather():
-    """Пробует источники по очереди. Возвращает (текст, источник) или None."""
     for func in (weather_from_open_meteo, weather_from_wttr, weather_from_metno):
         result = func()
         if result:
@@ -240,16 +242,20 @@ def fetch_weather():
     return None
 
 
-# ---------- ОСТАЛЬНЫЕ БЛОКИ ----------
+# ---------- КУРСЫ / КРИПТА / ЦИТАТА / ИСТОРИЯ ----------
 
 def fetch_rates() -> str:
     try:
         r = requests.get("https://www.cbr-xml-daily.ru/daily_json.js", timeout=15)
         d = r.json()["Valute"]
-        usd = round(d["USD"]["Value"], 2)
-        eur = round(d["EUR"]["Value"], 2)
-        cny = round(d["CNY"]["Value"], 2)
-        return f"💵 USD {usd} ₽ · 💶 EUR {eur} ₽ · 🇨🇳 CNY {cny} ₽"
+        parts = []
+        for code, flag in (("USD", "💵"), ("EUR", "💶"), ("CNY", "🇨🇳")):
+            v = d[code]["Value"]
+            prev = d[code]["Previous"]
+            delta = v - prev
+            arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "=")
+            parts.append(f"{flag} {round(v, 2)} ₽ {arrow}")
+        return " · ".join(parts)
     except Exception as e:
         print(f"rates fail: {e}", flush=True)
         return ""
@@ -259,19 +265,24 @@ def fetch_crypto() -> str:
     try:
         url = (
             "https://api.coingecko.com/api/v3/simple/price"
-            "?ids=bitcoin,ethereum&vs_currencies=usd"
+            "?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true"
         )
         r = requests.get(url, timeout=15)
         d = r.json()
-        btc = d["bitcoin"]["usd"]
-        eth = d["ethereum"]["usd"]
-        return f"₿ BTC ${btc:,.0f} · Ξ ETH ${eth:,.0f}"
+        parts = []
+        for key, sym in (("bitcoin", "₿ BTC"), ("ethereum", "Ξ ETH")):
+            price = d[key]["usd"]
+            chg = d[key].get("usd_24h_change", 0)
+            arrow = "▲" if chg > 0 else ("▼" if chg < 0 else "=")
+            parts.append(f"{sym} ${price:,.0f} {arrow}{abs(chg):.1f}%")
+        return " · ".join(parts)
     except Exception as e:
         print(f"crypto fail: {e}", flush=True)
         return ""
 
 
 def fetch_quote() -> str:
+    """💬 Цитата дня — через forismatic.com (русский)."""
     try:
         r = requests.get(
             "https://api.forismatic.com/api/1.0/",
@@ -292,7 +303,10 @@ def fetch_quote() -> str:
 def fetch_history() -> str:
     try:
         now = datetime.now(timezone.utc)
-        url = f"https://api.wikimedia.org/feed/v1/wikipedia/ru/onthisday/events/{now.month}/{now.day}"
+        url = (
+            f"https://api.wikimedia.org/feed/v1/wikipedia/ru/onthisday/events/"
+            f"{now.month}/{now.day}"
+        )
         r = requests.get(url, timeout=15)
         events = r.json().get("events", [])
         if not events:
@@ -306,43 +320,42 @@ def fetch_history() -> str:
         return ""
 
 
-def send_header() -> None:
+# ---------- ОТПРАВКА В TELEGRAM ----------
+
+def send_header(total_news: int) -> None:
+    """Шапка: дата, погода, курсы, крипта, цитата дня, история."""
     msk = datetime.now(timezone.utc) + timedelta(hours=3)
     lines = [
-        f"<b>📰 Главные новости</b>",
+        "<b>📰 Дайджест новостей</b>",
         f"<i>{msk.strftime('%d.%m.%Y · %H:%M')} МСК</i>",
-        "",
+        DIVIDER,
     ]
 
     weather = fetch_weather()
     if weather:
         text, source = weather
-        lines.append(f"<b>🌤 Погода в Нальчике</b> <i>({source})</i>")
-        lines.append(text)
-        lines.append("")
+        lines += ["<b>🌤 Погода в Нальчике</b>", f"{text} <i>({source})</i>", ""]
 
     rates = fetch_rates()
     if rates:
-        lines.append(f"<b>💱 Курсы ЦБ РФ</b>")
-        lines.append(rates)
-        lines.append("")
+        lines += ["<b>💱 Курсы ЦБ РФ</b>", rates, ""]
 
     crypto = fetch_crypto()
     if crypto:
-        lines.append(f"<b>🪙 Криптовалюты</b>")
-        lines.append(crypto)
-        lines.append("")
+        lines += ["<b>🪙 Криптовалюты</b>", crypto, ""]
 
     quote = fetch_quote()
     if quote:
-        lines.append(f"<b>💬 Цитата дня</b>")
-        lines.append(f"<i>{quote}</i>")
-        lines.append("")
+        lines += ["<b>💬 Цитата дня</b>", f"<i>{quote}</i>", ""]
 
     history = fetch_history()
     if history:
-        lines.append(f"<b>📅 В этот день</b>")
-        lines.append(history)
+        lines += ["<b>📅 В этот день</b>", history, ""]
+
+    if total_news > 0:
+        lines += [DIVIDER, f"📌 <b>Свежих новостей: {total_news}</b>"]
+    else:
+        lines += [DIVIDER, "📌 <i>Новых новостей пока нет</i>"]
 
     tg("sendMessage", {
         "chat_id": CHAT_ID,
@@ -351,16 +364,34 @@ def send_header() -> None:
     })
 
 
-def send_source_divider(source_name: str) -> None:
-    text = f"{DIVIDER}\n<b>{source_name}</b>\n{DIVIDER}"
-    tg("sendMessage", {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"})
+def send_preview_list(items: list) -> None:
+    if not items:
+        return
+    lines = ["<b>🗂 Краткий обзор</b>", ""]
+    for i, item in enumerate(items, 1):
+        cat = detect_category(item["title"])
+        title = html.escape(item["title"])
+        lines.append(f"{i}. {cat} <a href=\"{item['link']}\">{title}</a>")
+    tg("sendMessage", {
+        "chat_id": CHAT_ID,
+        "text": "\n".join(lines),
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    })
 
 
-def send_item(item: dict) -> None:
+def send_item(item: dict, idx: int, total: int) -> None:
+    cat = detect_category(item["title"])
+    source = item["source"].split(" ", 1)[-1]
     title = html.escape(item["title"])
     summary = html.escape(item["summary"])
-    time_part = f"  🕐 <i>{item['time']}</i>" if item["time"] else ""
-    caption = f"<b>{title}</b>{time_part}"
+    time_part = f" · 🕐 {item['time']}" if item["time"] else ""
+
+    caption = (
+        f"<b>{idx}/{total}</b> · {cat} <i>{source}</i>{time_part}\n"
+        f"{DIVIDER}\n"
+        f"<b>{title}</b>"
+    )
     if summary:
         caption += f"\n\n{summary}"
     if len(caption) > 1000:
@@ -368,7 +399,7 @@ def send_item(item: dict) -> None:
 
     reply_markup = {
         "inline_keyboard": [[
-            {"text": "Читать полностью →", "url": item["link"]}
+            {"text": "📖 Читать полностью", "url": item["link"]}
         ]]
     }
 
@@ -387,18 +418,18 @@ def send_item(item: dict) -> None:
         "chat_id": CHAT_ID,
         "text": caption,
         "parse_mode": "HTML",
-        "disable_web_page_preview": False,
+        "disable_web_page_preview": True,
         "reply_markup": reply_markup,
     })
 
 
-def fetch_groups(seen: dict):
-    groups = []
+def fetch_all_news(seen: dict) -> list:
+    items = []
     for source_name, url in RSS_URLS:
         feed = feedparser.parse(url)
-        items = []
+        count = 0
         for entry in feed.entries:
-            if len(items) >= NEWS_PER_FEED:
+            if count >= NEWS_PER_FEED:
                 break
             eid = entry_id(entry)
             if not eid or is_seen(seen, eid):
@@ -412,9 +443,8 @@ def fetch_groups(seen: dict):
                 "summary": shorten(entry.get("summary") or entry.get("description") or ""),
                 "time": format_time(entry),
             })
-        if items:
-            groups.append((source_name, items))
-    return groups
+            count += 1
+    return items
 
 
 def main() -> None:
@@ -422,23 +452,23 @@ def main() -> None:
     seen = load_seen()
     print(f">>> seen={len(seen)}", flush=True)
 
-    groups = fetch_groups(seen)
-    total = sum(len(items) for _, items in groups)
+    items = fetch_all_news(seen)
+    total = len(items)
     print(f">>> new items: {total}", flush=True)
 
-    send_header()
+    send_header(total)
 
-    if not groups:
+    if not items:
         print(">>> nothing new, header sent", flush=True)
         return
 
+    send_preview_list(items)
+
     now = time.time()
-    for source_name, items in groups:
-        send_source_divider(source_name)
-        for item in items:
-            print(f">>> {item['source']} | {item['title'][:60]}", flush=True)
-            send_item(item)
-            seen[item["id"]] = now
+    for i, item in enumerate(items, 1):
+        print(f">>> {item['source']} | {item['title'][:60]}", flush=True)
+        send_item(item, i, total)
+        seen[item["id"]] = now
 
     save_seen(seen)
     print(">>> DONE", flush=True)
