@@ -12,14 +12,14 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 METNO_EMAIL = os.environ.get("METNO_EMAIL", "")
 
-# --- ИСТОЧНИКИ (расширенный блок кино) ---
+# --- ИСТОЧНИКИ ---
 RSS_URLS = [
-    ("📰 Lenta.ru",         "https://lenta.ru/rss/news"),
-    ("✍️ АиФ",              "https://aif.ru/rss/news.php"),
-    ("📡 РИА Новости",      "https://ria.ru/export/rss2/archive/index.xml"),
-    ("🎬 Кино и сериалы",   "https://wcinema.ru/rss/feed/film"),
-    ("🎥 Film.ru",          "https://www.film.ru/rss/news"),
-    ("🎞 Кино-Театр.Ру",    "https://www.kino-teatr.ru/news/rss.xml"),
+    ("📰 Lenta.ru",       "https://lenta.ru/rss/news"),
+    ("✍️ АиФ",            "https://aif.ru/rss/news.php"),
+    ("📡 РИА Новости",    "https://ria.ru/export/rss2/archive/index.xml"),
+    ("🎬 Кино и сериалы", "https://wcinema.ru/rss/feed/film"),
+    ("🎥 Film.ru",        "https://www.film.ru/rss/news"),
+    ("🎞 Кино-Театр.Ру",  "https://www.kino-teatr.ru/news/rss.xml"),
 ]
 
 NEWS_PER_FEED = 2
@@ -446,20 +446,15 @@ def send_quote():
     })
 
 
-# ---------- АНЕКДОТ (ИСПРАВЛЕНА КОДИРОВКА) ----------
+# ---------- АНЕКДОТ ----------
 
 def fetch_joke() -> str:
-    """Анекдот из надёжного источника с корректной кодировкой."""
-    # Источник 1: anecdotica.ru — API, возвращает JSON, русский, без проблем с кодировкой
     try:
         r = requests.get(
             "http://anecdotica.ru/api",
             params={
-                "method": "getRandItem",
-                "category": "all",
-                "genre": 1,           # 1 = анекдоты
-                "format": "json",
-                "encoding": "utf-8",
+                "method": "getRandItem", "category": "all",
+                "genre": 1, "format": "json", "encoding": "utf-8",
             },
             timeout=15,
         )
@@ -470,14 +465,8 @@ def fetch_joke() -> str:
     except Exception as e:
         print(f"joke anecdotica fail: {e}", flush=True)
 
-    # Источник 2: rzhunemogu.ru — с ЯВНЫМ декодированием cp1251
     try:
-        r = requests.get(
-            "http://rzhunemogu.ru/RandJSON.aspx",
-            params={"CType": 1},
-            timeout=15,
-        )
-        # КЛЮЧЕВОЙ МОМЕНТ: принудительно декодируем из Windows-1251
+        r = requests.get("http://rzhunemogu.ru/RandJSON.aspx", params={"CType": 1}, timeout=15)
         raw = r.content.decode("cp1251", errors="replace")
         m = re.search(r'"content":"(.*?)"\s*}', raw, re.DOTALL)
         if m:
@@ -488,7 +477,6 @@ def fetch_joke() -> str:
                 return joke
     except Exception as e:
         print(f"joke rzhunemogu fail: {e}", flush=True)
-
     return ""
 
 
@@ -500,29 +488,82 @@ def send_joke():
     tg("sendMessage", {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"})
 
 
+# ---------- 🐱 КОТ ДНЯ ----------
+
+def fetch_cat() -> bytes:
+    """Случайное фото кота из TheCatAPI (без ключа)."""
+    try:
+        r = requests.get(
+            "https://api.thecatapi.com/v1/images/search",
+            params={"mime_types": "jpg,png", "size": "med"},
+            headers={"User-Agent": "NewsDigestBot/1.0"},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            print(f"cat api fail: {r.status_code}", flush=True)
+            return b""
+        data = r.json()
+        if not data or not data[0].get("url"):
+            return b""
+        img_url = data[0]["url"]
+        img = requests.get(
+            img_url,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; NewsDigestBot/1.0)"},
+            timeout=20,
+        )
+        if img.status_code == 200 and len(img.content) > 2000:
+            return img.content
+        print(f"cat img download fail: {img.status_code} size={len(img.content)}", flush=True)
+    except Exception as e:
+        print(f"cat exception: {e}", flush=True)
+    return b""
+
+
+def send_cat():
+    """Фото кота дня — скачиваем и загружаем файлом."""
+    content = fetch_cat()
+    if not content:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    files = {"photo": ("cat.jpg", content, "image/jpeg")}
+    data = {
+        "chat_id": CHAT_ID,
+        "caption": "<b>🐱 Кот дня</b>\n\n<i>Мур-мур, хорошего дня!</i>",
+        "parse_mode": "HTML",
+    }
+    try:
+        r = requests.post(url, data=data, files=files, timeout=60)
+        if r.status_code != 200:
+            print(f"sendCat fail: {r.status_code} {r.text[:150]}", flush=True)
+    except Exception as e:
+        print(f"sendCat exception: {e}", flush=True)
+
+
 # ---------- ИСТОРИЯ ----------
 
 def fetch_history() -> str:
-    try:
-        now = datetime.now(timezone.utc)
-        url = (
-            f"https://api.wikimedia.org/feed/v1/wikipedia/ru/onthisday/events/"
-            f"{now.month}/{now.day}"
-        )
-        r = requests.get(url, headers={"User-Agent": "NewsDigestBot/1.0"}, timeout=15)
-        if r.status_code != 200:
-            print(f"history fail: {r.status_code}", flush=True)
-            return ""
-        events = r.json().get("events", [])
-        if not events:
-            return ""
-        ev = events[0]
-        text = strip_html(ev.get("text", ""))
-        year = ev.get("year", "")
-        return f"{year} — {text}" if year else text
-    except Exception as e:
-        print(f"history fail: {e}", flush=True)
-        return ""
+    now = datetime.now(timezone.utc)
+    url = (
+        f"https://api.wikimedia.org/feed/v1/wikipedia/ru/onthisday/events/"
+        f"{now.month}/{now.day}"
+    )
+    headers = {"User-Agent": "NewsDigestBot/1.0"}
+    for attempt in range(1, 4):
+        try:
+            r = requests.get(url, headers=headers, timeout=20)
+            if r.status_code == 200:
+                events = r.json().get("events", [])
+                if not events:
+                    return ""
+                ev = events[0]
+                text = strip_html(ev.get("text", ""))
+                year = ev.get("year", "")
+                return f"{year} — {text}" if year else text
+            print(f"history attempt {attempt}: {r.status_code}", flush=True)
+        except Exception as e:
+            print(f"history attempt {attempt}: {e}", flush=True)
+        time.sleep(3)
+    return ""
 
 
 # ---------- АЧИВКИ ----------
@@ -664,16 +705,36 @@ def send_item(item: dict, idx: int, total: int) -> None:
     ]]}
 
     if item["image"]:
-        res = tg("sendPhoto", {
-            "chat_id": CHAT_ID, "photo": item["image"], "caption": caption,
-            "parse_mode": "HTML", "reply_markup": reply_markup,
-        })
-        if res and res.get("ok"):
-            return
+        try:
+            img = requests.get(
+                item["image"],
+                headers={"User-Agent": "Mozilla/5.0 (compatible; NewsDigestBot/1.0)"},
+                timeout=20,
+            )
+            if img.status_code == 200 and len(img.content) > 2000:
+                url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+                files = {"photo": ("image.jpg", img.content, "image/jpeg")}
+                data = {
+                    "chat_id": CHAT_ID,
+                    "caption": caption,
+                    "parse_mode": "HTML",
+                    "reply_markup": json.dumps(reply_markup),
+                }
+                r = requests.post(url, data=data, files=files, timeout=60)
+                if r.status_code == 200:
+                    return
+                print(f"sendPhoto upload fail: {r.status_code} {r.text[:150]}", flush=True)
+            else:
+                print(f"image download fail: {img.status_code} size={len(img.content)}", flush=True)
+        except Exception as e:
+            print(f"image exception: {e}", flush=True)
 
     tg("sendMessage", {
-        "chat_id": CHAT_ID, "text": caption, "parse_mode": "HTML",
-        "disable_web_page_preview": True, "reply_markup": reply_markup,
+        "chat_id": CHAT_ID,
+        "text": caption,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+        "reply_markup": reply_markup,
     })
 
 
@@ -715,16 +776,26 @@ def main() -> None:
     total = len(items)
     print(f">>> new items: {total}", flush=True)
 
+    # 1. Шапка
     send_header(total, days_active)
+
+    # 2. Цитата дня с портретом
     send_quote()
+
+    # 3. Анекдот
     send_joke()
+
+    # 4. 🐱 Кот дня
+    send_cat()
 
     if not items:
         print(">>> nothing new", flush=True)
         return
 
+    # 5. Топ-новости + краткий обзор
     send_preview_list(items)
 
+    # 6. Карточки
     now = time.time()
     for i, item in enumerate(items, 1):
         print(f">>> {item['source']} | {item['title'][:60]}", flush=True)
