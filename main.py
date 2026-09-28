@@ -16,6 +16,7 @@ RSS_URLS = [
 # Сколько новостей брать с каждой ленты
 NEWS_PER_FEED = 3
 
+
 def fetch_news():
     blocks = []
     for source_name, url in RSS_URLS:
@@ -28,6 +29,7 @@ def fetch_news():
         if items:
             blocks.append(f"<b>{source_name}</b>\n" + "\n".join(items))
     return blocks
+
 
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -42,6 +44,7 @@ def send_to_telegram(text):
         print(f"Ошибка отправки: {r.status_code} {r.text}")
     else:
         print("OK")
+
 
 def main():
     blocks = fetch_news()
@@ -60,6 +63,7 @@ def main():
         message = message[:4000] + "\n\n<i>…обрезано</i>"
 
     send_to_telegram(message)
+
 
 if __name__ == "__main__":
     main()
